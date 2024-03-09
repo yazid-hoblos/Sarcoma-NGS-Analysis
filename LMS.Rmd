@@ -1,0 +1,324 @@
+---
+title: "Analysis of NGS reads for a LMS Case"
+author: "Yazid Hoblos"
+---
+
+# Aim 
+
+This script is aimed at attempting to understand the genetic (at the DNA level) and molecular (at the RNA level, which would be expected to be reflected at the protein level) changes which are responsible for the development and progression of the Leiomyosarcoma (LMS), a type of rare cancer which grows in the smooth muscles. This type of cancer is known to be the most aggressive type of sarcoma, mainly due to its enhanced tendency to develop into metastasis. 
+
+DNA (whole-genome) sequencing was conducted for normal and cancerous tissues derived from a patient with LMS. Additionally RNA sequencing (at the level of the cancerous tissue) was for this same patient. The first step in our analysis would be to examine the quality of all reads. Second, both normal and cancerous DNA reads will be aligned against the human genome of reference (the UCSC hg38 version of the human genome is used) as a mean of establishing a frame of reference allowing for their comparison to detect any abnormal patterns which could uncover the mutations (insertions or deletions mainly) that were responsible for the generation of the tumor.
+
+Finally, the RNA reads will be analyzed following a similar approach, and their importance lies in their potential to reveal the expression levels for the regions suspected to have some role in LMS through the DNA reads analysis.
+
+The differences in analyzing RNA reads and DNA reads, both at the level of quality analysis and alignment and comparison, will be highlighted along the way.
+
+It is important to note that in this script, the analysis was focused on a specific fragment of the chromosome 17 only (ranging around 7000000 to 13000000). This is to reduce the huge computational time which would be required to analyze the whole human genome. This choice was not arbitrary as well, but based on the fact that this specific regions was found by several papers before to include some genes which appear to be important in the LMS onset, mainly TP53 and MYOCD.
+
+The alignment platform used is Illumina.
+
+# Data Files 
+
+* 6 fastq files corresponding for the normal DNA, cancerous DNA, and RNA sequencing data (2 files per sequencing experiment)
+* 2 tab files listing the DNA and RNA fastq files (these could be used to let the used functions detect all the files in an automated way)
+* A fasta file representing the genome of reference (only a fragment of chromosome 17 in our case, notice that The long N [any nucleotide] sequences at the end and the beginning) 
+* A gtf (gene transfer frormat) file storing the genomic coordinates in the region we selected (this is used for annotation purposes later on)
+
+
+# DNA WGS Analysis
+
+
+Package QuasR is used for quality analysis (make sure to install it through BiocManager::install('QuasR') before proceeding).
+
+In case you do not have BiocManager installed, run: 
+if (!requireNamespace("BiocManager", quietly = TRUE)) {install.packages("BiocManager")}
+
+```{r}
+library(QuasR)
+```
+
+
+```{r}
+read.delim("samples_LMS.tab",sep='\t')
+```
+ 
+Note that the presence of 2 files per sample is due to the fact that this is a paired-end (PE) reading, which will include both the forward (5' -> 3') and the reverse (3' -> 5') readings for each fragment. The first file (R1) correspond to the forward readings, while the second one (R2) corresponds to the second readings.
+
+
+```{r}
+readLines("LMS_C_R1.fastq",n=4)
+readLines("LMS_C_R2.fastq",n=4)
+```
+Examining the fastq files shows that they are divided into small reads covering 4 lines each. The first being the identifier for the read, highlighting some important information about it, such as the length (129) and the direction. Note that the size of the reads is the same for all reads (here 129, usuallu Illumina reads are 100 to few hundrends of length). The second line has the DNA sequence. The third line is the quality score identifier (always a single “+” sign) used to seperate the sequence and the quality scores, which are in the fourth lines. Each quality score (per nucleotide) has a sign highlighting the degree of confidence in that nucleotide (each of the quality symbols corresponds to a q-value reflecting the confidence in its accuracy), which is determined through a number of factors, most importantly the number of different reads in which that single nucleotide appeared. 
+
+
+
+# Alignement
+
+the qAlign function of QuasR will be used to perform the alignment.
+ 
+```{r}
+DNA_alignment= qAlign("samples_LMS.tab","chr17.fa", aligner ="Rbowtie",maxHits =1, paired ='fr')
+```
+
+The main two arguments passed are the sampleFile which consists in our case of the tab file, through which the fastq files names will be extracted and opened (corresponding to both directions of reads for both samples), as well as the genome of reference which we will use to align our reads to (in this case this is the chr17.fa). Note that qAlign will align the reads of the normal sample and those of the cancerous sample (each alone) to chr.fa.
+
+The parameter "paired" is set as fr(forward/reverse) since we have a paired-read data. The parameter maxHits is set to be 1 to avoid random alignments when a single fragment is aligned to more than a single region on the genome of reference. This parameter specifies the max number of alignments allowed per read. If more than 1 allowed, then if a read is found to align any number <= macHits of regions of the DNA, it will be set randomly to either of them.
+
+Moreover, inspecting the documentation for the qAlign shows that only two aligners are available Rbowtie, and Rhisat2 (which is designed for RNA alignment). In our case Rbowtie aligner is to be chosen because it is expected to work better for DNA alignment. Note that it does not allow gaps. 
+
+
+```{r}
+DNA_alignment
+```
+
+This output of the alignment highlights the parameters and arguments we set before, as well as the files that were extracted through the tab file given to the function, and most importantly the names of the alignment bam files obtained in our working directory (in this case a bam file will be generated for the tumor tissue sequence and another for the normal tissues DNA sequence). 
+
+Tha output bam files are the binary form of the sam (standard alignment map format) files which store the alignment results in a standerd format. The compressed non-readable bam files are used instead because they are much more efficient to use.
+
+
+
+# Quality assessment
+
+
+Next the quality of the reads and the alignment results will be assessed throught the fucntion alignmentStats.
+
+```{r}
+alignmentStats(DNA_alignment)
+```
+
+```{r}
+1478010/(1478010+55386)
+973332/(973332+35830)
+```
+We can see that the percentages of mapped regions are very high for both the tumor and normal DNA reads, as they should be. We can also see that their values are highly similar suggesting that the two samples had similar levels of DNA quality, quantity, and fragmentation. This is a desirable outcome for sequencing experiments, as it helps to ensure that any differences in gene expression or DNA mutations between the two samples are more likely to be biologically meaningful, rather than a consequence of technical variation.
+    
+
+Next, qQCReport will be used for a more extensive quality assessment. This function generate an 8 page pdf with many charts highlighting the quality of reads and the alignment.
+
+```{r}
+qQCReport(DNA_alignment, pdfFilename = 'Alignment_quality.pdf')
+```
+
+Figure 1 highlights the average quality value for each base across the whole reads (notice the length of the reads 129 as the x-axis) reflecting that overall the confidence in the sequence is highly accurate.
+
+Figure 2 shows that the matching between A-T and C-G is very favorable as well. Yet, it also highlights that the AT content seems to be much higher than the GC content (60% versus 40%), which is an indicator of the fragility of the DNA fragment, possibly a factor contributing to its tendency to be mutated, thus causing LMS emergence. 
+
+Figure 3 reflects that duplications are minimal, and it is desirable to have a low sequence duplication level and a high percentage of unique sequences, as this indicates a high level of diversity in the sequencing library and reduces the impact of technical biases on downstream analysis.
+
+Figure 4 highlights the percentages of mapped and unmapped reads as calculated before. They are found to be both highly favorable as said above.
+
+Figure 5 reflects the 100% unique alignment positions. This is due to maxHits choice of 1.
+
+Figure 6 the very low number of mismatches across all base pairs.
+
+Figure 7 showcases the distribution of these mismatchs across the four nucleotides, which can be seen to be very marginal overall and very similar across forward/reversed and tumor/normal reads.
+
+Figure 8 shows the distribution of fragment sizes to be normally distributed (as should be), while keeping in the range of few hundreds as would be for Illumina.
+
+
+Overall, all these results suggest that the quality of the results across both forward/reversed and tumor/normal cases is highly favourable and does not require any further cleaning.
+
+
+# Visualisation / Quantification
+
+Now that we ensured the good quality of the reads we have, we can proceed to compare the alignment results for the cancerous and normal tissues. To do so, we will find the coordinates of some genes and zoom into zoom. To find these coordinates, we might use the gtf file or navigate to nih and look for the location of the gene of interest.
+
+It is important to allow some space after and before this gene location to be able to appropriately visualize it.
+
+We will start by doing so for the gene MYOCD known to be involved in LMS. We will use the library GenomicRanges. Again, make sure to install it first using BiocManager.
+
+The range for MYOCD is found to be:
+start_codon	12666189-12666191 up to stop_codon	12763642-12763644.
+Note that genes could have several transcripts, with other genes embedded within their total regions.
+
+Using GRanges function, we will specify this range on chr17.
+
+```{r}
+library(GenomicRanges)
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =12666189-200000,end=12763644+200000))
+```
+
+Next, we will put the bam files we have in a vector.
+
+```{r}
+bam_files = list.files(pattern="bam$") #detect files with extension bam
+bam_files
+```
+We will use Gviz package for visualization (function plotTracks)
+
+```{r}
+library('Gviz')
+```
+
+
+```{r}
+# 1. Create empty axis
+axisTrack <- GenomeAxisTrack()
+
+# 2. Add chr17 to axis
+ideoTrack <- IdeogramTrack(genome = "hg38", chromosome = "chr17")
+
+# 3. Add tumor data
+dataTrack_C=DataTrack(range = bam_files[1], name ="Tumour", isPaired = TRUE , Type = "h",
+ucscChromosomeName = TRUE , chromosome = "chr17")
+
+# 4. Add normal data
+dataTrack_N=DataTrack(range = bam_files[2], name =" Normal", isPaired = TRUE , Type = "h",
+ucscChromosomeName = TRUE , chromosome = "chr17")
+
+# 5. Annotate 
+trscpTrack_T = GeneRegionTrack(range= "chr17_annotated_genes.gtf", name = " Transcripts", showID = TRUE ,
+ucscChromosomeName = TRUE , transcriptAnnotation= "geneid")
+```
+
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_C,dataTrack_N,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+The results highlight a big discrepancy in the read depth (coverage), i.e. the average number of reads that align to a particular location in the reference genome, between the cancerous and normal tissue originated reads in the specified region (at MYOCD and around it). Notice the scale y-scale differences.
+
+
+This would reflect more reads aligning with this particular region in the tumor DNA reads as compared to the nomrmal ones, which would suggest that an insertion or duplication event could have happened happened at this region, potentially due to errors during the DNA replication process, or by the presence of transposable elements or mobile genetic elements that can insert themselves into the DNA sequence. 
+
+Such discrepancy could be also due to some technical issue (such as contamination) with the sequencing experiment, yet we had already found the quality of our results to be fairly good. Additionally, we would expect such technical issues to result in either random regions of higher coverage or overall higher coverage, but in this case we can see this discrepancy in read coverage to be specific for a certain region around which no other significant discrepancies between the tumor and normal tissue reads are found.
+
+This was found by gradually enlarging the range to be chacked on chromosome 17.
+
+
+```{r, cache=TRUE}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =12000000,end=13000000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_N,dataTrack_C,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+We can start to see that only starting a bit after 12.1mbp, we can see this duplication effect emerging and being maintained, excluding the possibility of this being the result of a contamination of technical issue in sequencing.
+
+ 
+A further extension shown that only that specific region after 12.1mbp is twice as covered, further confirming our hypothesis.
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =7000000,end=13000000))
+```
+
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_N,dataTrack_C),from=start(gr), to=end(gr),type='p')
+```
+
+Based on this, a duplication event seems more likely since that region coverage seems to be exactly the double of that in normal tissues.
+
+MYOCD, the main gene whithin this duplicated region, is found to be the gene encoding myocardin which encodes a nuclear protein, expressed in the heart and the smooth muscle cells, functioning as a transcriptional co-activator and modulating other genes expression, thus playing a crucial role in cardiogenesis and differentiation of the smooth muscle cell lineage, which fits its potential to be involved in cancer emergence.
+
+
+# RNAseq Analaysis
+
+
+```{r}
+readLines("LMS_RNA_R1.fastq",n=4)
+readLines("LMS_RNA_R2.fastq",n=4)
+```
+
+```{r}
+RNA_alignment= qAlign("samples_LMS_RNA.tab","chr17.fa", aligner ="Rhisat2",maxHits =1, paired ='fr',geneAnnotation = "chr17_annotated_genes.gtf")
+```
+
+```{r}
+alignmentStats(RNA_alignment)
+```
+
+```{r}
+qQCReport(RNA_alignment, pdfFilename = 'QCReport_RNAseq.pdf')
+```
+Analyzing the plots as before reflects the very good quality of the RNA reads as well. 2 major points are worth mentioning: first, that it is typical for RNA reads to have mismatches at the beginning of the reads due to the tendency of RNA polymerase to make mistakes before being stabilized to the RNA fragment. That is why despite the high discrepancies at the beginning of the reads highlighted in page2 of the report, the quality of reads is highly good. Also, the last page highlight that some RNA fragments are up to 10kbp which is highly improbable indicating possible contamination. Yet, the median is maintained at an acceptable value of 157 so we will proceed with using this data. 
+
+
+```{r}
+# Reading the bam files again
+bam_files = list.files(pattern="bam$")
+bam_files
+```
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start = 12565890,end = 12868949))
+```
+
+```{r}
+axisTrack <- GenomeAxisTrack()
+ideoTrack <- IdeogramTrack(genome = "hg38", chromosome = "chr17")
+
+dataTrack_T=DataTrack(range = bam_files[1], name ="Tumour", isPaired = TRUE , Type = "h",
+ucscChromosomeName = TRUE , chromosome = "chr17")
+
+dataTrack_N=DataTrack(range = bam_files[2], name =" Normal", isPaired = TRUE , Type = "h",
+ucscChromosomeName = TRUE , chromosome = "chr17")
+
+dataTrack_R=DataTrack(range = bam_files[3], name =" RNA", isPaired = TRUE , Type = "h",
+ucscChromosomeName = TRUE , chromosome = "chr17")
+
+trscpTrack_T = GeneRegionTrack(range= "chr17_annotated_genes.gtf", name = " Transcripts", showID = TRUE ,
+ucscChromosomeName = TRUE , transcriptAnnotation= "geneid")
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_T,dataTrack_N,dataTrack_R,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+Examining the MYOCD region reflects that it is highly expressed at the transcriptional level, highlighting its exceptional importance as hypothesized before.
+
+Extending the range to check for other genes expression patterns.
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start = 12000000,end = 13000000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_T,dataTrack_N,dataTrack_R,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+Extending it to the whole region, we can find other genes in the non-duplicated region with higher transcriptional activity, which might be linked to cancer or not.
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =7000000,end=13000000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_R),from=start(gr), to=end(gr),type='p')
+```
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =8300000,end=8400000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_R,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+Examining the most transcribed of these genes, we find that it is RPL26 (ribosomal protein L26).
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =7800000,end=7930000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_R,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+SCARNA21 (small Cajal body-specific RNA 21)
+
+# Another gene examination (TP53)
+
+
+Zooming in further to the TP53 (coordinates found the same way) gene shows that no major discrepancy in reads depth is found for it between the tumor and normal DNA reads.
+
+```{r}
+gr = GRanges( seqnames = Rle(c("chr17"),c(1)),ranges= IRanges(start =7665000,end=7690000))
+```
+
+```{r}
+plotTracks(list(axisTrack,ideoTrack,dataTrack_N,dataTrack_C,dataTrack_R,trscpTrack_T),from=start(gr), to=end(gr),type='p')
+```
+
+This gene does not seem to be affected.
